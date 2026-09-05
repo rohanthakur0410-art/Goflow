@@ -1,0 +1,27 @@
+services:
+  goflow:
+    build: .
+    image: goflow:local
+    container_name: goflow
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      DATABASE_PATH: "/app/data/goflow.db"
+      WORKER_COUNT: "2"
+      QUEUE_SIZE: "100"
+      MAX_RETRIES: "3"
+      SHUTDOWN_TIMEOUT: "15"
+      SCALING_THRESHOLDS: "10:2,50:5,999999:10"
+    volumes:
+      - goflow-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  goflow-data:

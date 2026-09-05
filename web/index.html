@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GoFlow &mdash; Job Processing Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">&#9679;</span>
+      <div>
+        <h1>GoFlow</h1>
+        <p class="subtitle">Concurrent job processing &amp; worker orchestration</p>
+      </div>
+    </div>
+    <div class="status-pill" id="health-pill">
+      <span class="dot"></span>
+      <span id="health-text">checking&hellip;</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="stat-grid" id="stat-grid" aria-label="Job statistics">
+      <!-- stat cards injected by app.js -->
+    </section>
+
+    <section class="panels">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Workers</h2>
+          <span class="panel-meta" id="workers-count"></span>
+        </div>
+        <div class="table-wrap">
+          <table id="workers-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Current Job</th>
+                <th>Processed</th>
+                <th>Failed</th>
+                <th>Last Heartbeat</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Recent Jobs</h2>
+          <span class="panel-meta" id="jobs-count"></span>
+        </div>
+        <div class="table-wrap">
+          <table id="jobs-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Type</th>
+                <th>Priority</th>
+                <th>Status</th>
+                <th>Retries</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel submit-panel">
+      <div class="panel-header">
+        <h2>Submit a Job</h2>
+        <span class="panel-meta">POST /api/jobs</span>
+      </div>
+      <form id="submit-form">
+        <div class="field-row">
+          <label>
+            Type
+            <select name="type" id="job-type">
+              <option value="email">email</option>
+              <option value="report_generation">report_generation</option>
+              <option value="data_processing">data_processing</option>
+              <option value="image_processing">image_processing</option>
+              <option value="webhook">webhook</option>
+            </select>
+          </label>
+          <label>
+            Priority
+            <select name="priority">
+              <option value="HIGH">HIGH</option>
+              <option value="MEDIUM" selected>MEDIUM</option>
+              <option value="LOW">LOW</option>
+            </select>
+          </label>
+          <label>
+            Max Retries
+            <input type="number" name="max_retries" value="3" min="0" />
+          </label>
+        </div>
+        <label class="payload-field">
+          Payload (JSON)
+          <textarea name="payload" id="job-payload" rows="3"></textarea>
+        </label>
+        <div class="form-actions">
+          <button type="submit">Submit Job</button>
+          <span id="submit-feedback"></span>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <footer>
+    <p>Polling <code>/api/stats</code>, <code>/api/jobs</code> and <code>/api/workers</code> every 2s &middot; Prometheus metrics at <a href="/metrics">/metrics</a></p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
