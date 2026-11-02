@@ -396,6 +396,35 @@ func (s *Store) ListAttempts(jobID string) ([]JobAttempt, error) {
 	return out, rows.Err()
 }
 
+// ListWorkerAttempts returns the most recent attempts recorded for a worker,
+// newest first, capped at limit rows (a non-positive limit falls back to 50).
+func (s *Store) ListWorkerAttempts(workerID string, limit int) ([]JobAttempt, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.DB.Query(`
+		SELECT id, job_id, attempt_number, worker_id, started_at, completed_at, status, error_message, duration_ms
+		FROM job_attempts WHERE worker_id = ? ORDER BY started_at DESC, id DESC LIMIT ?`, workerID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []JobAttempt
+	for rows.Next() {
+		var a JobAttempt
+		var completedAt sql.NullTime
+		if err := rows.Scan(&a.ID, &a.JobID, &a.AttemptNumber, &a.WorkerID, &a.StartedAt, &completedAt, &a.Status, &a.ErrorMessage, &a.DurationMS); err != nil {
+			return nil, err
+		}
+		if completedAt.Valid {
+			a.CompletedAt = &completedAt.Time
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // JobAttempt mirrors the job_attempts table for API responses.
 type JobAttempt struct {
 	ID            int64      `json:"id"`
