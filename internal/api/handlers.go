@@ -213,6 +213,41 @@ func (h *Handlers) GetWorker(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rec)
 }
 
+// GetWorkerHistory handles GET /api/workers/{id}/history?limit= and returns
+// the worker's most recent job attempts, newest first, from job_attempts.
+func (h *Handlers) GetWorkerHistory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := h.mgr.Store().GetWorker(id); errors.Is(err, database.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "worker not found")
+		return
+	} else if err != nil {
+		h.log.Error("getting worker", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to get worker")
+		return
+	}
+
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 200 {
+			writeError(w, http.StatusBadRequest, "limit must be an integer between 1 and 200")
+			return
+		}
+		limit = n
+	}
+
+	attempts, err := h.mgr.Store().ListWorkerAttempts(id, limit)
+	if err != nil {
+		h.log.Error("listing worker history", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list worker history")
+		return
+	}
+	if attempts == nil {
+		attempts = []database.JobAttempt{}
+	}
+	writeJSON(w, http.StatusOK, attempts)
+}
+
 // statsResponse combines database-derived job counts with live in-process
 // metrics for the dashboard's single summary call.
 type statsResponse struct {
