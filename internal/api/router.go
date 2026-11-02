@@ -21,6 +21,7 @@ func NewRouter(h *Handlers, webDir string, log *slog.Logger) http.Handler {
 
 	mux.HandleFunc("GET /api/workers", h.ListWorkers)
 	mux.HandleFunc("GET /api/workers/{id}", h.GetWorker)
+	mux.HandleFunc("GET /api/workers/{id}/history", h.GetWorkerHistory)
 
 	mux.HandleFunc("GET /api/stats", h.Stats)
 	mux.HandleFunc("GET /api/health", h.Health)
