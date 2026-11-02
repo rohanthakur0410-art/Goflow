@@ -337,6 +337,57 @@ func TestJobAttempts_RecordStartAndEnd(t *testing.T) {
 	}
 }
 
+func TestListWorkerAttempts(t *testing.T) {
+	s := newTestStore(t)
+	s.CreateJob(newTestJob("job-1", jobs.PriorityHigh))
+	s.CreateJob(newTestJob("job-2", jobs.PriorityHigh))
+
+	base := time.Now().UTC()
+	// Two attempts by worker-1 (oldest first) and one by worker-2.
+	for i, jobID := range []string{"job-1", "job-2"} {
+		id, err := s.RecordAttemptStart(jobID, "worker-1", 1, base.Add(time.Duration(i)*time.Second))
+		if err != nil {
+			t.Fatalf("RecordAttemptStart: %v", err)
+		}
+		if err := s.RecordAttemptEnd(id, jobs.StatusCompleted, "", base.Add(time.Duration(i)*time.Second+100*time.Millisecond), 100); err != nil {
+			t.Fatalf("RecordAttemptEnd: %v", err)
+		}
+	}
+	if _, err := s.RecordAttemptStart("job-1", "worker-2", 2, base.Add(2*time.Second)); err != nil {
+		t.Fatalf("RecordAttemptStart: %v", err)
+	}
+
+	attempts, err := s.ListWorkerAttempts("worker-1", 50)
+	if err != nil {
+		t.Fatalf("ListWorkerAttempts: %v", err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("expected 2 attempts for worker-1, got %d", len(attempts))
+	}
+	// Newest first: job-2's attempt started later.
+	if attempts[0].JobID != "job-2" || attempts[1].JobID != "job-1" {
+		t.Fatalf("expected newest-first order [job-2 job-1], got [%s %s]", attempts[0].JobID, attempts[1].JobID)
+	}
+
+	// Limit caps the result to the single most recent attempt.
+	limited, err := s.ListWorkerAttempts("worker-1", 1)
+	if err != nil {
+		t.Fatalf("ListWorkerAttempts limit: %v", err)
+	}
+	if len(limited) != 1 || limited[0].JobID != "job-2" {
+		t.Fatalf("expected only the newest attempt, got %+v", limited)
+	}
+
+	// A worker with no attempts yields an empty slice, not an error.
+	none, err := s.ListWorkerAttempts("worker-unknown", 50)
+	if err != nil {
+		t.Fatalf("ListWorkerAttempts unknown worker: %v", err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("expected no attempts, got %d", len(none))
+	}
+}
+
 func TestStats(t *testing.T) {
 	s := newTestStore(t)
 	s.CreateJob(newTestJob("p1", jobs.PriorityHigh))
