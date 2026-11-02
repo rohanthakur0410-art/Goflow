@@ -214,6 +214,7 @@ All request/response bodies are JSON. Errors are `{"error": "message"}` with an 
 | `DELETE` | `/api/jobs/{id}` | Delete a job permanently |
 | `GET` | `/api/workers` | List all workers and their stats |
 | `GET` | `/api/workers/{id}` | Get a single worker |
+| `GET` | `/api/workers/{id}/history?limit=` | A worker's recent job attempts, newest first (from `job_attempts`) |
 | `GET` | `/api/stats` | Aggregate job counts, queue size, active workers, avg processing time |
 | `GET` | `/api/health` | Liveness/readiness check (pings the database) |
 | `GET` | `/metrics` | Prometheus text-exposition metrics |
@@ -397,5 +398,4 @@ curl localhost:8080/metrics
 - Priority-aging (a LOW job waiting long enough temporarily gets boosted) to avoid theoretical starvation under sustained HIGH-priority load
 - Per-job-type concurrency limits (e.g. cap `image_processing` at N concurrent regardless of overall worker count)
 - An API-key-scoped auth middleware built on the existing `users` table
-- A `job_attempts`-backed `/api/workers/{id}/history` endpoint
 - Structured job payload schemas (JSON Schema validation per job `type`) instead of handler-level ad-hoc validation
