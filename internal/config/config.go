@@ -33,6 +33,7 @@ type Config struct {
 
 	SchedulerPollInterval time.Duration
 	ScalingCheckInterval  time.Duration
+	AgingInterval         time.Duration // priority-aging tick; 0 disables aging
 	HeartbeatInterval     time.Duration
 	StaleWorkerThreshold  time.Duration
 
@@ -51,6 +52,7 @@ func Load() (*Config, error) {
 		DefaultJobTimeout:     getEnvDuration("DEFAULT_JOB_TIMEOUT_SECONDS", 30*time.Second),
 		ShutdownTimeout:       getEnvDuration("SHUTDOWN_TIMEOUT", 15*time.Second),
 		SchedulerPollInterval: getEnvDuration("SCHEDULER_POLL_INTERVAL_SECONDS", 2*time.Second),
+		AgingInterval:         getEnvDuration("AGING_INTERVAL_SECONDS", 60*time.Second),
 		ScalingCheckInterval:  getEnvDuration("SCALING_CHECK_INTERVAL_SECONDS", 3*time.Second),
 		HeartbeatInterval:     getEnvDuration("HEARTBEAT_INTERVAL_SECONDS", 5*time.Second),
 		StaleWorkerThreshold:  getEnvDuration("STALE_WORKER_THRESHOLD_SECONDS", 20*time.Second),
