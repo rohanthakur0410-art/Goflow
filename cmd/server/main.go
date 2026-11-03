@@ -94,6 +94,12 @@ func run(log *slog.Logger) error {
 	sched := scheduler.New(mgr, cfg.SchedulerPollInterval, log)
 	go sched.Run(schedCtx)
 
+	if cfg.AgingInterval > 0 {
+		ager := scheduler.NewAger(mgr, jobs.PriorityHigh.Weight(), cfg.AgingInterval, log)
+		go ager.Run(schedCtx)
+		log.Info("priority aging enabled", "interval", cfg.AgingInterval)
+	}
+
 	handlers := api.NewHandlers(mgr, pool, m, log)
 	router := api.NewRouter(handlers, "web", log)
 	httpServer := &http.Server{
