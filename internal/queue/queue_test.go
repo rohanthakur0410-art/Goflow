@@ -173,3 +173,74 @@ func TestQueue_ConcurrentProducersConsumers(t *testing.T) {
 		received++
 	}
 }
+
+func TestQueue_AgeBoostsWaitingJobs(t *testing.T) {
+	q := New()
+	q.Push("old-low", 2)
+	q.Age(0) // old-low: weight 2 -> 1
+
+	q.Push("fresh-medium", 1)
+	// Same weight after aging, but old-low has the earlier seq, so its
+	// wait is rewarded and it pops first.
+	for _, want := range []string{"old-low", "fresh-medium"} {
+		id, ok := q.Pop(context.Background())
+		if !ok || id != want {
+			t.Fatalf("got %q ok=%v, want %q", id, ok, want)
+		}
+	}
+}
+
+func TestQueue_AgePreventsStarvation(t *testing.T) {
+	q := New()
+	q.Push("old-low", 2)
+	q.Push("new-high", 0)
+
+	// Without aging the HIGH job would pop first. Two aging rounds lift the
+	// LOW job to weight 0, where its earlier seq wins the tie.
+	q.Age(0)
+	q.Age(0)
+
+	id, ok := q.Pop(context.Background())
+	if !ok || id != "old-low" {
+		t.Fatalf("got %q ok=%v, want old-low to win after aging", id, ok)
+	}
+}
+
+func TestQueue_AgeNeverCrossesFloor(t *testing.T) {
+	q := New()
+	q.Push("high", 0)
+	q.Age(0)
+	q.Age(0)
+	q.Push("another-high", 0)
+
+	// The first HIGH job must still be at weight 0 (not negative), so FIFO
+	// order between the two HIGH jobs is preserved.
+	for _, want := range []string{"high", "another-high"} {
+		id, ok := q.Pop(context.Background())
+		if !ok || id != want {
+			t.Fatalf("got %q ok=%v, want %q", id, ok, want)
+		}
+	}
+}
+
+func TestQueue_AgePreservesFIFOWithinBoostedLevel(t *testing.T) {
+	q := New()
+	q.Push("first", 2)
+	q.Push("second", 2)
+	q.Push("third", 2)
+	q.Age(0)
+
+	for _, want := range []string{"first", "second", "third"} {
+		id, ok := q.Pop(context.Background())
+		if !ok || id != want {
+			t.Fatalf("got %q ok=%v, want %q", id, ok, want)
+		}
+	}
+}
+
+func TestQueue_AgeOnEmptyAndClosedQueue(t *testing.T) {
+	q := New()
+	q.Age(0) // empty: no-op, must not panic
+	q.Close()
+	q.Age(0) // closed: no-op, must not panic
+}
