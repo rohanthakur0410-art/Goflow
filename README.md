@@ -17,6 +17,7 @@ It's deliberately **not** a CRUD app with a database behind it. The point of the
 - [Job Lifecycle](#job-lifecycle)
 - [Worker Architecture](#worker-architecture)
 - [Priority Queue](#priority-queue)
+- [Priority Aging](#priority-aging)
 - [Retry Strategy](#retry-strategy)
 - [Scheduling](#scheduling)
 - [Concurrency Design](#concurrency-design)
@@ -42,6 +43,7 @@ It's deliberately **not** a CRUD app with a database behind it. The point of the
 
 - **REST API** for submitting, listing, inspecting, cancelling, retrying, and deleting jobs
 - **In-memory priority queue** (HIGH / MEDIUM / LOW) built on `container/heap`, no Redis
+- **Priority aging** — a job waiting in the queue too long is boosted one level at a time, so sustained HIGH-priority load cannot starve older LOW jobs
 - **Dynamically-scaled worker pool** — the number of goroutines pulling jobs grows and shrinks with queue depth
 - **Automatic retries with exponential backoff**, configurable max attempts, and a DEAD letter state after retries are exhausted
 - **Per-job timeouts** via `context.WithTimeout`, distinct from cancellation
@@ -151,6 +153,10 @@ A panic inside a handler is recovered inside `processJob` and converted into a n
 `internal/queue` is a `container/heap` of `{JobID, Weight, seq}` guarded by a mutex and a `sync.Cond`. `Weight` comes from `Priority.Weight()` (HIGH=0, MEDIUM=1, LOW=2 — lower sorts first); `seq` is a monotonically increasing insertion counter used as a tie-breaker, so jobs of equal priority come out in FIFO order. `Pop(ctx)` blocks on the condition variable until an item is pushed, the queue is `Close()`d, or `ctx` is cancelled — the last case is handled with `context.AfterFunc` broadcasting the condition variable, since `sync.Cond` has no native context support.
 
 No external broker. At the scale this is built for, a heap plus a mutex is simpler to reason about, easier to explain in an interview, and just as correct.
+
+## Priority Aging
+
+A pure priority queue has a starvation hole: under a sustained stream of HIGH-priority submissions, a LOW job can wait forever. GoFlow closes it with **priority aging** — a `scheduler.Ager` goroutine ticks every `AGING_INTERVAL_SECONDS` (default `60`, set to `0` to disable) and boosts every queued job one weight level (`LOW` → `MEDIUM` → `HIGH`), implemented as `Queue.Age(floor)` decrementing weights under the queue mutex and re-establishing the heap invariant with `heap.Init`. The floor is HIGH's weight, so aging never invents a new priority level, and the FIFO `seq` tie-breaker is untouched — a boosted LOW job competes with fresh HIGH jobs in arrival order. The boost lives only in the in-memory queue: the priority stored in SQLite is never rewritten, so a restart simply rebuilds the queue from the original priorities and aging starts over.
 
 ## Retry Strategy
 
@@ -395,7 +401,6 @@ curl localhost:8080/metrics
 
 ## Future Improvements
 
-- Priority-aging (a LOW job waiting long enough temporarily gets boosted) to avoid theoretical starvation under sustained HIGH-priority load
 - Per-job-type concurrency limits (e.g. cap `image_processing` at N concurrent regardless of overall worker count)
 - An API-key-scoped auth middleware built on the existing `users` table
 - Structured job payload schemas (JSON Schema validation per job `type`) instead of handler-level ad-hoc validation
