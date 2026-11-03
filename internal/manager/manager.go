@@ -269,6 +269,14 @@ func (mgr *Manager) EnqueueExisting(jobID string, priority jobs.Priority) {
 	mgr.metrics.SetQueueSize(mgr.queue.Len())
 }
 
+// AgeQueue applies one round of priority aging to every job waiting in the
+// queue: each item's weight moves one step toward floor (lower = sooner),
+// never crossing it. The priority stored in SQLite is untouched - the boost
+// is temporary and lasts only until the job is dequeued.
+func (mgr *Manager) AgeQueue(floor int) {
+	mgr.queue.Age(floor)
+}
+
 // CancelAllRunning force-cancels every currently-registered running job's
 // context. Used as the last resort at the end of the graceful shutdown
 // window, once ShutdownTimeout has elapsed and jobs still haven't finished
