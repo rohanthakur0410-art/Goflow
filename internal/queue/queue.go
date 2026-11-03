@@ -120,6 +120,28 @@ func (q *Queue) Len() int {
 	return len(q.heap)
 }
 
+// Age boosts every queued item one priority level by decrementing its
+// Weight, never below floor, then restores the heap invariant. Called
+// periodically (see scheduler.Ager) so long-waiting low-priority jobs
+// eventually compete with freshly-pushed high-priority ones, preventing
+// starvation under sustained high-priority load. Items already at or below
+// floor keep their weight, and FIFO order within a weight is preserved
+// because seq values are untouched.
+func (q *Queue) Age(floor int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	changed := false
+	for _, item := range q.heap {
+		if item.Weight > floor {
+			item.Weight--
+			changed = true
+		}
+	}
+	if changed {
+		heap.Init(&q.heap)
+	}
+}
+
 // Close wakes up every blocked Pop call; subsequent Push calls are no-ops.
 // Used during graceful shutdown.
 func (q *Queue) Close() {
