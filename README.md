@@ -310,6 +310,8 @@ cp .env.example .env   # optional; sane defaults work with no .env at all
 go run ./cmd/server
 ```
 
+Every supported variable is listed in `.env.example` with its default. Real environment variables take precedence over `.env`.
+
 The server listens on `:8080` by default, auto-creates `./data/goflow.db`, and applies migrations on startup. Visit `http://localhost:8080` for the dashboard, or:
 
 ```bash
