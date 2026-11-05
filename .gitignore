@@ -6,9 +6,12 @@
 # Environment
 .env
 .env.*
+!.env.example
 
 # Database
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 
