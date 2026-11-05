@@ -4,6 +4,7 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"sort"
@@ -41,8 +42,13 @@ type Config struct {
 }
 
 // Load builds a Config from environment variables, falling back to defaults
-// documented in .env.example.
+// documented in .env.example. If a .env file exists in the working directory
+// its entries are applied first; real environment variables always win over
+// .env, and a missing .env is fine (defaults apply).
 func Load() (*Config, error) {
+	// Best-effort: a missing or partially malformed .env never blocks startup.
+	_ = loadDotEnv(".env")
+
 	cfg := &Config{
 		Port:                  getEnv("PORT", "8080"),
 		DatabasePath:          getEnv("DATABASE_PATH", "./data/goflow.db"),
@@ -118,6 +124,43 @@ func parseScalingThresholds(raw string) ([]ScalingRule, error) {
 	}
 	sort.Slice(rules, func(i, j int) bool { return rules[i].QueueSize < rules[j].QueueSize })
 	return rules, nil
+}
+
+// loadDotEnv reads KEY=VALUE lines from path into the process environment,
+// but only for keys that are not already set - the real environment always
+// takes precedence over the file. Blank lines, # comments and an optional
+// "export " prefix are ignored, matching common .env tooling; a single pair
+// of matching surrounding quotes is stripped from values. Lines without an
+// '=' are skipped. A missing file is not an error.
+func loadDotEnv(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err // missing .env is normal; callers may ignore this
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
+			v = v[1 : len(v)-1]
+		}
+		if k == "" || os.Getenv(k) != "" {
+			continue
+		}
+		os.Setenv(k, v)
+	}
+	return scanner.Err()
 }
 
 func getEnv(key, fallback string) string {
