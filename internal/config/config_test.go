@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestParseScalingThresholds(t *testing.T) {
 	rules, err := parseScalingThresholds("50:5,10:2,999999:10")
@@ -62,5 +65,57 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.Port == "" || cfg.DatabasePath == "" || cfg.WorkerCount < 1 {
 		t.Fatalf("unexpected default config: %+v", cfg)
+	}
+}
+
+func writeDotEnv(t *testing.T, content string) string {
+	t.Helper()
+	p := t.TempDir() + "/.env"
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestLoadDotEnv_MissingFile(t *testing.T) {
+	if err := loadDotEnv(t.TempDir() + "/does-not-exist"); err == nil {
+		t.Fatal("expected an error for a missing file (callers ignore it), got nil")
+	}
+}
+
+func TestLoadDotEnv_AppliesValues(t *testing.T) {
+	p := writeDotEnv(t, "# comment\n\nPORT=9090\nexport WORKER_COUNT=7\nQUOTED=\"hello world\"\nSINGLE='x'\nmalformed line without equals\n=novalue\n")
+	for _, k := range []string{"PORT", "WORKER_COUNT", "QUOTED", "SINGLE"} {
+		os.Unsetenv(k)
+	}
+	if err := loadDotEnv(p); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Unsetenv("PORT")
+	defer os.Unsetenv("WORKER_COUNT")
+	defer os.Unsetenv("QUOTED")
+	defer os.Unsetenv("SINGLE")
+	if got := os.Getenv("PORT"); got != "9090" {
+		t.Fatalf("PORT = %q, want 9090", got)
+	}
+	if got := os.Getenv("WORKER_COUNT"); got != "7" {
+		t.Fatalf("WORKER_COUNT = %q, want 7 (export prefix)", got)
+	}
+	if got := os.Getenv("QUOTED"); got != "hello world" {
+		t.Fatalf("QUOTED = %q, want quotes stripped", got)
+	}
+	if got := os.Getenv("SINGLE"); got != "x" {
+		t.Fatalf("SINGLE = %q, want x", got)
+	}
+}
+
+func TestLoadDotEnv_RealEnvWins(t *testing.T) {
+	t.Setenv("PORT", "1234")
+	p := writeDotEnv(t, "PORT=9090\n")
+	if err := loadDotEnv(p); err != nil {
+		t.Fatal(err)
+	}
+	if got := os.Getenv("PORT"); got != "1234" {
+		t.Fatalf("PORT = %q, want 1234 (real env must win over .env)", got)
 	}
 }
