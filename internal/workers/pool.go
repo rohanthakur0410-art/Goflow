@@ -30,6 +30,8 @@ type Pool struct {
 	cfg      *config.Config
 	log      *slog.Logger
 
+	typeLimiter *jobs.TypeLimiter
+
 	mu      sync.Mutex
 	workers map[string]*workerHandle
 	counter int
@@ -41,12 +43,13 @@ type Pool struct {
 // background monitor goroutines.
 func New(mgr *manager.Manager, registry *jobs.Registry, m *metrics.Metrics, cfg *config.Config, log *slog.Logger) *Pool {
 	return &Pool{
-		mgr:      mgr,
-		registry: registry,
-		metrics:  m,
-		cfg:      cfg,
-		log:      log,
-		workers:  make(map[string]*workerHandle),
+		mgr:         mgr,
+		registry:    registry,
+		metrics:     m,
+		cfg:         cfg,
+		log:         log,
+		typeLimiter: jobs.NewTypeLimiter(cfg.JobTypeLimits),
+		workers:     make(map[string]*workerHandle),
 	}
 }
 
