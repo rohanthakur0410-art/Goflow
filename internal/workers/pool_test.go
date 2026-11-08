@@ -462,3 +462,187 @@ func TestPool_GracefulShutdownLetsInFlightJobFinish(t *testing.T) {
 		t.Fatalf("expected in-flight job to complete despite shutdown, got %s", final.Status)
 	}
 }
+
+// TestPool_PerTypeConcurrencyLimit proves a capped job type cannot exceed
+// its configured concurrency even when the pool has idle workers, and that
+// an uncapped type keeps flowing while a capped one holds its only slot.
+func TestPool_PerTypeConcurrencyLimit(t *testing.T) {
+	registry := jobs.NewRegistry()
+
+	firstStarted := make(chan struct{})
+	unblockFirst := make(chan struct{})
+	secondStarted := make(chan struct{})
+	var firstOnce, secondOnce sync.Once
+
+	registry.Register("capped", func(ctx context.Context, payload []byte) error {
+		switch string(payload) {
+		case `"first"`:
+			firstOnce.Do(func() { close(firstStarted) })
+			select {
+			case <-unblockFirst:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		default:
+			secondOnce.Do(func() { close(secondStarted) })
+			return nil
+		}
+	})
+	var freeRan atomic.Bool
+	registry.Register("free", func(ctx context.Context, payload []byte) error {
+		freeRan.Store(true)
+		return nil
+	})
+
+	store := newTestStore(t)
+	q := queue.New()
+	m := metrics.New()
+	log := testLogger()
+	cfg := testConfig()
+	cfg.JobTypeLimits = map[string]int{"capped": 1}
+	mgr := manager.New(store, q, m, log, cfg.MaxRetries, cfg.DefaultJobTimeout)
+	pool := New(mgr, registry, m, cfg, log)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+	defer func() {
+		cancel() // stops the monitor goroutines and every worker's pull loop
+		pool.ShutdownAll()
+		if !pool.WaitTimeout(5 * time.Second) {
+			t.Error("pool did not shut down within 5s")
+		}
+	}()
+
+	first, err := mgr.Submit(manager.SubmitInput{Type: "capped", Payload: []byte(`"first"`), Priority: jobs.PriorityHigh})
+	if err != nil {
+		t.Fatalf("Submit first: %v", err)
+	}
+	select {
+	case <-firstStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first capped job did not start")
+	}
+
+	// While the first capped job holds the only slot, an uncapped job must
+	// still run on the other worker.
+	free, err := mgr.Submit(manager.SubmitInput{Type: "free", Payload: []byte(`{}`), Priority: jobs.PriorityHigh})
+	if err != nil {
+		t.Fatalf("Submit free: %v", err)
+	}
+	waitForStatus(t, store, free.ID, jobs.StatusCompleted, 3*time.Second)
+	if !freeRan.Load() {
+		t.Fatal("uncapped job did not run while capped slot was held")
+	}
+
+	// A second capped job is claimed but must NOT start: the only slot is held.
+	second, err := mgr.Submit(manager.SubmitInput{Type: "capped", Payload: []byte(`"second"`), Priority: jobs.PriorityHigh})
+	if err != nil {
+		t.Fatalf("Submit second: %v", err)
+	}
+	select {
+	case <-secondStarted:
+		t.Fatal("second capped job started while the only type slot was still held")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// Releasing the first job frees the slot; the second must now run.
+	close(unblockFirst)
+	waitForStatus(t, store, first.ID, jobs.StatusCompleted, 3*time.Second)
+	select {
+	case <-secondStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("second capped job never started after the slot was released")
+	}
+	waitForStatus(t, store, second.ID, jobs.StatusCompleted, 3*time.Second)
+}
+
+// TestPool_TypeSlotWaitTimesOutAsAttempt covers the failure path: a job
+// that cannot get a type slot within its own timeout fails that attempt and
+// follows the normal retry path, rather than hanging forever.
+func TestPool_TypeSlotWaitTimesOutAsAttempt(t *testing.T) {
+	registry := jobs.NewRegistry()
+	unblock := make(chan struct{})
+	var unblockOnce sync.Once
+	closeOnce := func() { unblockOnce.Do(func() { close(unblock) }) }
+	registry.Register("capped", func(ctx context.Context, payload []byte) error {
+		if string(payload) == `"holder"` {
+			select {
+			case <-unblock:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	})
+
+	store := newTestStore(t)
+	q := queue.New()
+	m := metrics.New()
+	log := testLogger()
+	cfg := testConfig()
+	cfg.JobTypeLimits = map[string]int{"capped": 1}
+	mgr := manager.New(store, q, m, log, cfg.MaxRetries, cfg.DefaultJobTimeout)
+	pool := New(mgr, registry, m, cfg, log)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool.Start(ctx)
+	defer func() {
+		closeOnce()
+		cancel()
+		pool.ShutdownAll()
+		pool.WaitTimeout(5 * time.Second)
+	}()
+
+	holder, err := mgr.Submit(manager.SubmitInput{Type: "capped", Payload: []byte(`"holder"`), Priority: jobs.PriorityHigh})
+	if err != nil {
+		t.Fatalf("Submit holder: %v", err)
+	}
+	// Wait until the holder actually owns the slot.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		j, err := store.GetJob(holder.ID)
+		if err == nil && j.Status == jobs.StatusRunning {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("holder job never reached RUNNING")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	timeout := 1 // second; far shorter than the holder's block
+	waiter, err := mgr.Submit(manager.SubmitInput{
+		Type: "capped", Payload: []byte(`"waiter"`), Priority: jobs.PriorityHigh, TimeoutSecs: &timeout,
+	})
+	if err != nil {
+		t.Fatalf("Submit waiter: %v", err)
+	}
+
+	// The waiter's first attempt must time out waiting for the slot; with
+	// MaxRetries=3 the job lands back in RETRYING (then PENDING on
+	// promotion), not COMPLETED, and the attempt log records the timeout.
+	time.Sleep(2500 * time.Millisecond)
+	attempts, err := store.ListAttempts(waiter.ID)
+	if err != nil {
+		t.Fatalf("ListAttempts: %v", err)
+	}
+	if len(attempts) == 0 {
+		t.Fatal("no attempts recorded for the waiter")
+	}
+	foundTimeout := false
+	for _, a := range attempts {
+		if a.ErrorMessage != "" && a.Status == string(jobs.StatusFailed) {
+			foundTimeout = true
+		}
+	}
+	if !foundTimeout {
+		t.Fatalf("no failed (timed-out) attempt recorded for the waiter: %+v", attempts)
+	}
+
+	// Free the slot: the retried waiter must now complete.
+	closeOnce()
+	waitForStatus(t, store, holder.ID, jobs.StatusCompleted, 3*time.Second)
+	waitForStatus(t, store, waiter.ID, jobs.StatusCompleted, 5*time.Second)
+}
