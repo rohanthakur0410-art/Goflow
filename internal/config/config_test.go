@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"reflect"
 	"testing"
 )
 
@@ -117,5 +118,42 @@ func TestLoadDotEnv_RealEnvWins(t *testing.T) {
 	}
 	if got := os.Getenv("PORT"); got != "1234" {
 		t.Fatalf("PORT = %q, want 1234 (real env must win over .env)", got)
+	}
+}
+
+func TestParseJobTypeLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    map[string]int
+		wantErr bool
+	}{
+		{"empty means unlimited", "", map[string]int{}, false},
+		{"single", "image_processing=2", map[string]int{"image_processing": 2}, false},
+		{"multiple with spaces", "image_processing=2, email_sending=5", map[string]int{"image_processing": 2, "email_sending": 5}, false},
+		{"trailing comma tolerated", "a=1,", map[string]int{"a": 1}, false},
+		{"missing value", "a=", nil, true},
+		{"missing separator", "a1", nil, true},
+		{"non-numeric limit", "a=two", nil, true},
+		{"zero limit rejected", "a=0", nil, true},
+		{"negative limit rejected", "a=-2", nil, true},
+		{"empty type rejected", "=2", nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseJobTypeLimits(tt.raw)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseJobTypeLimits(%q) = %v, want error", tt.raw, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseJobTypeLimits(%q): %v", tt.raw, err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("parseJobTypeLimits(%q) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
 	}
 }
