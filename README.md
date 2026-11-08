@@ -45,6 +45,7 @@ It's deliberately **not** a CRUD app with a database behind it. The point of the
 - **In-memory priority queue** (HIGH / MEDIUM / LOW) built on `container/heap`, no Redis
 - **Priority aging** — a job waiting in the queue too long is boosted one level at a time, so sustained HIGH-priority load cannot starve older LOW jobs
 - **Dynamically-scaled worker pool** — the number of goroutines pulling jobs grows and shrinks with queue depth
+- **Per-job-type concurrency limits** — cap how many jobs of a given type run at once (e.g. `JOB_TYPE_LIMITS=image_processing=2`), independent of overall worker count
 - **Automatic retries with exponential backoff**, configurable max attempts, and a DEAD letter state after retries are exhausted
 - **Per-job timeouts** via `context.WithTimeout`, distinct from cancellation
 - **Manual job cancellation** that actually interrupts a *running* job via `context` cancellation, not just a database flag
@@ -185,6 +186,7 @@ The delay before retry *N* is `2^(N-1)` seconds, implemented as `time.AfterFunc`
 | `context.WithTimeout` | per-job execution | Job timeouts, independent of cancellation |
 | `context.CancelFunc` registry (mutex-guarded map) | `internal/manager` | Manual cancellation reaches a *running* goroutine, not just a DB row |
 | `sync/atomic` counters | `internal/metrics` | Lock-free metric increments under concurrent worker access |
+| `chan struct{}` semaphore per limited type | `internal/jobs.TypeLimiter` | At most N concurrent executions of a capped job type |
 | `sync.WaitGroup` | `internal/workers.Pool` | Graceful shutdown waits for every worker goroutine to actually exit |
 
 `go test -race ./...` passes across the whole module (see [Race Detector](#race-detector)); the worker pool tests in particular spin up many goroutines claiming, failing, cancelling, and completing jobs concurrently against a real SQLite database.
@@ -204,6 +206,12 @@ The one transaction worth reading closely is `Store.ClaimJob`: it `SELECT`s the 
 ## Dynamic Worker Scaling
 
 `internal/workers.Pool` re-evaluates target worker count every `SCALING_CHECK_INTERVAL_SECONDS` against `SCALING_THRESHOLDS` (default `10:2,50:5,999999:10` — queue size ≤10 → 2 workers, ≤50 → 5, otherwise → 10). Scaling up spawns new worker goroutines immediately; scaling down cancels a worker's *pull-loop* context, which lets it finish any job it's currently running before it exits and deregisters itself. Thresholds are fully configurable via the `SCALING_THRESHOLDS` env var.
+
+## Per-Type Concurrency Limits
+
+`JOB_TYPE_LIMITS` (default empty, i.e. every type unlimited) caps concurrent executions per job type: `JOB_TYPE_LIMITS=image_processing=2,email_sending=5`. This is for types that thrash a scarce downstream resource — a rate-limited API, a single GPU — even when the pool has idle workers ready to run more of them.
+
+Mechanics, honestly stated: a worker pops a job off the queue and claims it as usual, then waits for a free type slot before invoking the handler. That wait is part of the attempt and bounded by the job's own timeout — a wait that times out consumes an attempt and follows the normal retry path, and a manual cancel interrupts it like any other cancellation. Uncapped types never wait (one map read per job). One caveat worth knowing: a worker waiting for a type slot holds its claim and does not pull other jobs in the meantime, so a badly-chosen cap can create head-of-line blocking behind a long-running job of the same type. Keep caps at or above the count of workers you expect to dedicate to that type.
 
 ## API Documentation
 
@@ -403,6 +411,5 @@ curl localhost:8080/metrics
 
 ## Future Improvements
 
-- Per-job-type concurrency limits (e.g. cap `image_processing` at N concurrent regardless of overall worker count)
 - An API-key-scoped auth middleware built on the existing `users` table
 - Structured job payload schemas (JSON Schema validation per job `type`) instead of handler-level ad-hoc validation
