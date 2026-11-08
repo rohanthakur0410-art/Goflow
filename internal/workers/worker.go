@@ -117,7 +117,17 @@ func (p *Pool) processJob(workerCtx context.Context, workerID, jobID string) {
 		p.log.Error("recording attempt start", "job_id", jobID, "error", attemptErr)
 	}
 
-	execErr := p.runHandler(handler, jobCtx, j.Payload)
+	// Per-job-type concurrency caps: a limited type may have fewer slots
+	// than the pool has workers, so a worker can end up waiting here while
+	// holding its claim. That wait is part of the attempt and bounded by
+	// the same job timeout, so it flows through the normal failure paths:
+	// a wait that times out retries like any timed-out attempt, and a
+	// manual cancel interrupts it like any cancelled one.
+	execErr := p.typeLimiter.Acquire(jobCtx, j.Type)
+	if execErr == nil {
+		execErr = p.runHandler(handler, jobCtx, j.Payload)
+		p.typeLimiter.Release(j.Type)
+	}
 
 	cancel()
 	p.mgr.UnregisterRunning(jobID)
