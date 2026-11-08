@@ -39,6 +39,10 @@ type Config struct {
 	StaleWorkerThreshold  time.Duration
 
 	ScalingRules []ScalingRule
+
+	// JobTypeLimits caps concurrent executions per job type ("image_processing=2"
+	// style). A missing type (or an empty map) means unlimited.
+	JobTypeLimits map[string]int
 }
 
 // Load builds a Config from environment variables, falling back to defaults
@@ -69,6 +73,12 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid SCALING_THRESHOLDS: %w", err)
 	}
 	cfg.ScalingRules = rules
+
+	limits, err := parseJobTypeLimits(getEnv("JOB_TYPE_LIMITS", ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid JOB_TYPE_LIMITS: %w", err)
+	}
+	cfg.JobTypeLimits = limits
 
 	if cfg.WorkerCount < 1 {
 		return nil, fmt.Errorf("WORKER_COUNT must be >= 1")
@@ -186,4 +196,34 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 		}
 	}
 	return fallback
+}
+
+// parseJobTypeLimits parses a string like "image_processing=2,email_sending=5"
+// into a per-type max-concurrency map. An empty string yields an empty map
+// (every type unlimited). Each entry needs a non-empty type and a limit >= 1.
+func parseJobTypeLimits(raw string) (map[string]int, error) {
+	limits := make(map[string]int)
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		kv := strings.SplitN(p, "=", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("expected type=maxConcurrent, got %q", p)
+		}
+		jobType := strings.TrimSpace(kv[0])
+		if jobType == "" {
+			return nil, fmt.Errorf("empty job type in %q", p)
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(kv[1]))
+		if err != nil {
+			return nil, fmt.Errorf("bad concurrency limit in %q: %w", p, err)
+		}
+		if n < 1 {
+			return nil, fmt.Errorf("concurrency limit for %q must be >= 1, got %d", jobType, n)
+		}
+		limits[jobType] = n
+	}
+	return limits, nil
 }
