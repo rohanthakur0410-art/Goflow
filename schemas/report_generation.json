@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "report_generation job payload",
+  "type": "object",
+  "required": ["report_name"],
+  "properties": {
+    "report_name": { "type": "string", "minLength": 1 },
+    "rows": { "type": "integer", "minimum": 0 }
+  }
+}
