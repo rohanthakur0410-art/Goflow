@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "email job payload",
+  "type": "object",
+  "required": ["to"],
+  "properties": {
+    "to": { "type": "string", "minLength": 1 },
+    "subject": { "type": "string" },
+    "body": { "type": "string" }
+  }
+}
