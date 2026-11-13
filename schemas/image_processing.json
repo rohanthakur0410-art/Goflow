@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "image_processing job payload",
+  "type": "object",
+  "required": ["image_url"],
+  "properties": {
+    "image_url": { "type": "string", "minLength": 1 },
+    "resize": { "type": "string" }
+  }
+}
