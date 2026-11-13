@@ -21,6 +21,7 @@ import (
 	"goflow/internal/metrics"
 	"goflow/internal/queue"
 	"goflow/internal/scheduler"
+	"goflow/internal/validation"
 	"goflow/internal/workers"
 )
 
@@ -56,6 +57,17 @@ func run(log *slog.Logger) error {
 	m := metrics.New()
 	q := queue.New()
 	mgr := manager.New(store, q, m, log, cfg.MaxRetries, cfg.DefaultJobTimeout)
+
+	validator, err := validation.LoadDir(cfg.PayloadSchemasDir)
+	if err != nil {
+		return err
+	}
+	mgr.SetValidator(validator)
+	if types := validator.Types(); len(types) > 0 {
+		log.Info("payload schemas loaded", "dir", cfg.PayloadSchemasDir, "types", types)
+	} else {
+		log.Info("no payload schemas found, submit-time payload validation is off", "dir", cfg.PayloadSchemasDir)
+	}
 
 	// Recover any job that was RUNNING when a previous process died, and
 	// re-enqueue it so it isn't stuck forever.
