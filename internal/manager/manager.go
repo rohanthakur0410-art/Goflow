@@ -17,6 +17,7 @@ import (
 	"goflow/internal/jobs"
 	"goflow/internal/metrics"
 	"goflow/internal/queue"
+	"goflow/internal/validation"
 )
 
 // Manager coordinates job submission, claiming, completion, retries, and
@@ -32,6 +33,7 @@ type Manager struct {
 
 	mu          sync.Mutex
 	cancelFuncs map[string]context.CancelFunc // jobID -> cancel for currently-running jobs
+	validator   *validation.Validator         // nil = no payload schema checks
 	retryTimers map[string]*time.Timer        // jobID -> pending backoff timer
 
 	shuttingDown bool
@@ -50,6 +52,12 @@ func New(store *database.Store, q *queue.Queue, m *metrics.Metrics, log *slog.Lo
 		cancelFuncs:       make(map[string]context.CancelFunc),
 		retryTimers:       make(map[string]*time.Timer),
 	}
+}
+
+// SetValidator attaches a payload-schema validator. Passing nil (or never
+// calling it) leaves payload validation off.
+func (mgr *Manager) SetValidator(v *validation.Validator) {
+	mgr.validator = v
 }
 
 // SubmitInput describes a new job request from the API layer.
@@ -87,6 +95,12 @@ func (mgr *Manager) Submit(in SubmitInput) (*jobs.Job, error) {
 			return nil, fmt.Errorf("%w: timeout_seconds must be positive", ErrValidation)
 		}
 		timeoutSecs = *in.TimeoutSecs
+	}
+
+	if mgr.validator != nil {
+		if err := mgr.validator.Validate(in.Type, in.Payload); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrValidation, err)
+		}
 	}
 
 	status := jobs.StatusPending
