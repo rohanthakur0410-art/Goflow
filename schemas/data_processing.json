@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "data_processing job payload",
+  "type": "object",
+  "required": ["dataset", "operation"],
+  "properties": {
+    "dataset": { "type": "string", "minLength": 1 },
+    "operation": { "type": "string", "minLength": 1 }
+  }
+}
