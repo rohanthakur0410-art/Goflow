@@ -43,6 +43,11 @@ type Config struct {
 	// JobTypeLimits caps concurrent executions per job type ("image_processing=2"
 	// style). A missing type (or an empty map) means unlimited.
 	JobTypeLimits map[string]int
+
+	// PayloadSchemasDir holds one "<type>.json" JSON Schema (draft 2020-12)
+	// per job type. Types with a schema get their payload validated at
+	// submit time; types without one are accepted as before.
+	PayloadSchemasDir string
 }
 
 // Load builds a Config from environment variables, falling back to defaults
@@ -66,6 +71,7 @@ func Load() (*Config, error) {
 		ScalingCheckInterval:  getEnvDuration("SCALING_CHECK_INTERVAL_SECONDS", 3*time.Second),
 		HeartbeatInterval:     getEnvDuration("HEARTBEAT_INTERVAL_SECONDS", 5*time.Second),
 		StaleWorkerThreshold:  getEnvDuration("STALE_WORKER_THRESHOLD_SECONDS", 20*time.Second),
+		PayloadSchemasDir:     getEnv("JOB_PAYLOAD_SCHEMAS_DIR", "schemas"),
 	}
 
 	rules, err := parseScalingThresholds(getEnv("SCALING_THRESHOLDS", "10:2,50:5,999999:10"))
