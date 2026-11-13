@@ -46,6 +46,7 @@ It's deliberately **not** a CRUD app with a database behind it. The point of the
 - **Priority aging** — a job waiting in the queue too long is boosted one level at a time, so sustained HIGH-priority load cannot starve older LOW jobs
 - **Dynamically-scaled worker pool** — the number of goroutines pulling jobs grows and shrinks with queue depth
 - **Per-job-type concurrency limits** — cap how many jobs of a given type run at once (e.g. `JOB_TYPE_LIMITS=image_processing=2`), independent of overall worker count
+- **Per-job-type payload schemas** — optional JSON Schema (draft 2020-12) validation per job `type` at submit time; violating payloads get a 400 naming the offending fields before the job ever reaches the queue
 - **Automatic retries with exponential backoff**, configurable max attempts, and a DEAD letter state after retries are exhausted
 - **Per-job timeouts** via `context.WithTimeout`, distinct from cancellation
 - **Manual job cancellation** that actually interrupts a *running* job via `context` cancellation, not just a database flag
@@ -212,6 +213,12 @@ The one transaction worth reading closely is `Store.ClaimJob`: it `SELECT`s the 
 `JOB_TYPE_LIMITS` (default empty, i.e. every type unlimited) caps concurrent executions per job type: `JOB_TYPE_LIMITS=image_processing=2,email_sending=5`. This is for types that thrash a scarce downstream resource — a rate-limited API, a single GPU — even when the pool has idle workers ready to run more of them.
 
 Mechanics, honestly stated: a worker pops a job off the queue and claims it as usual, then waits for a free type slot before invoking the handler. That wait is part of the attempt and bounded by the job's own timeout — a wait that times out consumes an attempt and follows the normal retry path, and a manual cancel interrupts it like any other cancellation. Uncapped types never wait (one map read per job). One caveat worth knowing: a worker waiting for a type slot holds its claim and does not pull other jobs in the meantime, so a badly-chosen cap can create head-of-line blocking behind a long-running job of the same type. Keep caps at or above the count of workers you expect to dedicate to that type.
+
+## Payload Schemas
+
+`JOB_PAYLOAD_SCHEMAS_DIR` (default `schemas/`) can hold one JSON Schema (draft 2020-12) per job type, named `<type>.json`. When a schema exists for a type, `POST /api/jobs` validates the payload against it and rejects violations with a 400 whose message names the offending instance locations (e.g. `/to: missing property`), before the job is persisted or queued. Types without a schema file submit exactly as before, so adoption is per-type and incremental. A malformed schema file fails startup loudly instead of silently disabling validation for that type; a missing directory just turns the feature off.
+
+The repo ships schemas for the five example job types in `schemas/`. They encode the contracts the default handlers already check ad-hoc (`email` requires `to`, `webhook` requires `url` and restricts `method` to the usual HTTP verbs, `report_generation.rows` must be a non-negative integer, and so on), so the handler-level checks become a second line of defense instead of the only one.
 
 ## API Documentation
 
@@ -412,4 +419,3 @@ curl localhost:8080/metrics
 ## Future Improvements
 
 - An API-key-scoped auth middleware built on the existing `users` table
-- Structured job payload schemas (JSON Schema validation per job `type`) instead of handler-level ad-hoc validation
