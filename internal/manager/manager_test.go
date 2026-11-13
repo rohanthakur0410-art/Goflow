@@ -2,10 +2,14 @@ package manager
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"goflow/internal/jobs"
+	"goflow/internal/validation"
 )
 
 func TestBackoffFor(t *testing.T) {
@@ -49,5 +53,35 @@ func TestSubmit_ValidationErrors(t *testing.T) {
 	_, err = mgr.Submit(SubmitInput{Type: "email", Priority: jobs.PriorityHigh, TimeoutSecs: &zeroTimeout})
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("expected ErrValidation for zero timeout, got %v", err)
+	}
+}
+
+func TestSubmit_PayloadSchemaViolation(t *testing.T) {
+	dir := t.TempDir()
+	schema := `{
+	  "$schema": "https://json-schema.org/draft/2020-12/schema",
+	  "type": "object",
+	  "required": ["to"],
+	  "properties": { "to": { "type": "string", "minLength": 1 } }
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "email.json"), []byte(schema), 0o644); err != nil {
+		t.Fatalf("writing schema: %v", err)
+	}
+	v, err := validation.LoadDir(dir)
+	if err != nil {
+		t.Fatalf("loading schemas: %v", err)
+	}
+
+	mgr := New(nil, nil, nil, nil, 3, 30*time.Second)
+	mgr.SetValidator(v)
+
+	// Violation is rejected as a validation error before the (nil) store is
+	// ever touched.
+	_, err = mgr.Submit(SubmitInput{Type: "email", Payload: []byte(`{"subject": "hi"}`), Priority: jobs.PriorityHigh})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("expected ErrValidation for schema-violating payload, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "to") {
+		t.Fatalf("error should name the missing field, got %q", err.Error())
 	}
 }
