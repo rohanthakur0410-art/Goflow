@@ -68,6 +68,10 @@ type SubmitInput struct {
 	MaxRetries  *int
 	TimeoutSecs *int
 	ScheduledAt *time.Time
+
+	// CreatedBy attributes the job to a users table id; 0 falls back to the
+	// seeded system user (id 1), which is also the value when auth is off.
+	CreatedBy int64
 }
 
 // Submit validates and persists a new job, enqueueing it immediately unless
@@ -103,6 +107,11 @@ func (mgr *Manager) Submit(in SubmitInput) (*jobs.Job, error) {
 		}
 	}
 
+	createdBy := in.CreatedBy
+	if createdBy == 0 {
+		createdBy = 1 // seeded system user; see migrations/0001_init.sql
+	}
+
 	status := jobs.StatusPending
 	if in.ScheduledAt != nil && in.ScheduledAt.After(time.Now()) {
 		status = jobs.StatusScheduled
@@ -118,7 +127,7 @@ func (mgr *Manager) Submit(in SubmitInput) (*jobs.Job, error) {
 		ScheduledAt: in.ScheduledAt,
 		MaxRetries:  maxRetries,
 		TimeoutSecs: timeoutSecs,
-		CreatedBy:   1, // seeded system user; see migrations/0001_init.sql
+		CreatedBy:   createdBy,
 	}
 
 	if err := mgr.store.CreateJob(j); err != nil {
