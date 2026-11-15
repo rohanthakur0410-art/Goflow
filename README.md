@@ -35,7 +35,6 @@ It's deliberately **not** a CRUD app with a database behind it. The point of the
 - [Example API Requests](#example-api-requests)
 - [Design Decisions](#design-decisions)
 - [Challenges](#challenges)
-- [Future Improvements](#future-improvements)
 
 ---
 
@@ -47,6 +46,7 @@ It's deliberately **not** a CRUD app with a database behind it. The point of the
 - **Dynamically-scaled worker pool** — the number of goroutines pulling jobs grows and shrinks with queue depth
 - **Per-job-type concurrency limits** — cap how many jobs of a given type run at once (e.g. `JOB_TYPE_LIMITS=image_processing=2`), independent of overall worker count
 - **Per-job-type payload schemas** — optional JSON Schema (draft 2020-12) validation per job `type` at submit time; violating payloads get a 400 naming the offending fields before the job ever reaches the queue
+- **Optional API-key auth** — flip `AUTH_REQUIRED=true` and job submit/cancel/retry/delete require a valid key (`Authorization: Bearer` or `X-API-Key`); keys are stored as SHA-256 hashes in the `users` table and jobs are attributed to the key owner
 - **Automatic retries with exponential backoff**, configurable max attempts, and a DEAD letter state after retries are exhausted
 - **Per-job timeouts** via `context.WithTimeout`, distinct from cancellation
 - **Manual job cancellation** that actually interrupts a *running* job via `context` cancellation, not just a database flag
@@ -219,6 +219,12 @@ Mechanics, honestly stated: a worker pops a job off the queue and claims it as u
 `JOB_PAYLOAD_SCHEMAS_DIR` (default `schemas/`) can hold one JSON Schema (draft 2020-12) per job type, named `<type>.json`. When a schema exists for a type, `POST /api/jobs` validates the payload against it and rejects violations with a 400 whose message names the offending instance locations (e.g. `/to: missing property`), before the job is persisted or queued. Types without a schema file submit exactly as before, so adoption is per-type and incremental. A malformed schema file fails startup loudly instead of silently disabling validation for that type; a missing directory just turns the feature off.
 
 The repo ships schemas for the five example job types in `schemas/`. They encode the contracts the default handlers already check ad-hoc (`email` requires `to`, `webhook` requires `url` and restricts `method` to the usual HTTP verbs, `report_generation.rows` must be a non-negative integer, and so on), so the handler-level checks become a second line of defense instead of the only one.
+
+## API Authentication
+
+Auth is off by default, so local development works exactly as before. Set `AUTH_REQUIRED=true` to require an API key on the four mutating endpoints (`POST /api/jobs`, cancel, retry, delete). Clients send the key as `Authorization: Bearer <key>` or `X-API-Key: <key>`; failures get a 401 with a `WWW-Authenticate: Bearer` header and a generic message that never echoes the presented key. Read endpoints, `/metrics`, `/health` and the dashboard stay open in every mode — monitoring should not need secrets; put the deployment behind a network boundary if reads are sensitive.
+
+Keys live in the existing `users` table, and only as SHA-256 hashes — at every startup the server one-way migrates any plaintext value it finds (including the seeded local dev key) to its hash. Give the operator key through the environment: `ADMIN_API_KEY=<your-key>` replaces the system user's key at startup and is never logged or stored in plaintext. Submitted jobs are attributed to the key owner's `users.id` (`created_by`), which is what the `users` table was seeded for. Additional users/keys are ordinary `users` rows with hashed keys (`sha256` hex of the plaintext); there is deliberately no key-creation HTTP endpoint — key management is an operator action, not an API surface.
 
 ## API Documentation
 
@@ -415,7 +421,3 @@ curl localhost:8080/metrics
 - **Distinguishing "cancelled by a user" from "cancelled because the process is shutting down."** Both end up calling the same `context.CancelFunc`. The fix: `Manager.CancelJob` writes `CANCELLED` to SQLite *before* invoking the cancel func, so by the time the worker's handler returns `context.Canceled`, `FailJob` can check the row's current status and no-op instead of bouncing an intentionally-cancelled job into `RETRYING`.
 - **Orphaned `RUNNING` jobs after a crash.** If the process dies mid-job, that job's row is stuck at `RUNNING` forever with no worker coming back to finish it. `cmd/server/main.go` calls `Store.ResetOrphanedRunningJobs()` on startup, which resets anything still `RUNNING` back to `PENDING` and re-enqueues it — a `RUNNING` row can only mean a previous process was killed mid-flight, since a clean shutdown always drives jobs to a terminal state or leaves them `PENDING`/`RETRYING` for exactly this recovery path to pick up.
 - **A worker that doesn't return promptly after its context is cancelled will still block the worker goroutine.** Go doesn't preempt a goroutine that's ignoring `ctx.Done()`. Every example handler in `internal/jobs/handlers.go` is written around a `sleepWithContext` helper specifically so timeouts and cancellation are honored quickly — a real-world handler wrapping a blocking library call (e.g. an HTTP request without a context-aware client) wouldn't get that for free, and that's a genuine limitation worth knowing about rather than a bug in this design.
-
-## Future Improvements
-
-- An API-key-scoped auth middleware built on the existing `users` table
