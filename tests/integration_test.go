@@ -79,7 +79,7 @@ func startStack(t *testing.T) *stack {
 	go sched.Run(poolCtx)
 
 	handlers := api.NewHandlers(mgr, pool, m, log)
-	router := api.NewRouter(handlers, "", log)
+	router := api.NewRouter(handlers, "", log, nil)
 	server := httptest.NewServer(router)
 
 	t.Cleanup(func() {
