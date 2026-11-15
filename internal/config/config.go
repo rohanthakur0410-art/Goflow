@@ -48,6 +48,14 @@ type Config struct {
 	// per job type. Types with a schema get their payload validated at
 	// submit time; types without one are accepted as before.
 	PayloadSchemasDir string
+
+	// AuthRequired makes the mutating API endpoints (job submit, cancel,
+	// retry, delete) require a valid API key. Read endpoints stay open.
+	AuthRequired bool
+
+	// AdminAPIKey, when set, replaces the system user's API key at startup
+	// (only its SHA-256 hash is stored). It is never logged.
+	AdminAPIKey string
 }
 
 // Load builds a Config from environment variables, falling back to defaults
@@ -72,6 +80,8 @@ func Load() (*Config, error) {
 		HeartbeatInterval:     getEnvDuration("HEARTBEAT_INTERVAL_SECONDS", 5*time.Second),
 		StaleWorkerThreshold:  getEnvDuration("STALE_WORKER_THRESHOLD_SECONDS", 20*time.Second),
 		PayloadSchemasDir:     getEnv("JOB_PAYLOAD_SCHEMAS_DIR", "schemas"),
+		AuthRequired:          getEnv("AUTH_REQUIRED", "false") == "true",
+		AdminAPIKey:           getEnv("ADMIN_API_KEY", ""),
 	}
 
 	rules, err := parseScalingThresholds(getEnv("SCALING_THRESHOLDS", "10:2,50:5,999999:10"))
