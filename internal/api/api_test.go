@@ -61,7 +61,7 @@ func testServer(t *testing.T) (http.Handler, *manager.Manager, func()) {
 	pool.Start(ctx)
 
 	handlers := NewHandlers(mgr, pool, m, log)
-	router := NewRouter(handlers, "", log)
+	router := NewRouter(handlers, "", log, nil)
 
 	cleanup := func() {
 		cancel()
