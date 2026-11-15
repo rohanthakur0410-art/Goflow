@@ -50,6 +50,7 @@ func (h *Handlers) CreateJob(w http.ResponseWriter, r *http.Request) {
 		MaxRetries:  req.MaxRetries,
 		TimeoutSecs: req.TimeoutSecs,
 		ScheduledAt: req.ScheduledAt,
+		CreatedBy:   UserIDFromContext(r.Context()),
 	})
 	if err != nil {
 		if errors.Is(err, manager.ErrValidation) {
