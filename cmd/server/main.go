@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -50,6 +51,25 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	log.Info("database ready", "path", cfg.DatabasePath)
+
+	// One-way migrate any plaintext users.api_key values (including the
+	// seeded local dev key) to SHA-256 hashes, then apply the operator's
+	// admin key from the environment if one is set. The plaintext key is
+	// never logged or stored.
+	if n, err := store.HashPlaintextAPIKeys(); err != nil {
+		return fmt.Errorf("hashing api keys: %w", err)
+	} else if n > 0 {
+		log.Info("migrated plaintext api keys to hashes", "count", n)
+	}
+	if cfg.AdminAPIKey != "" {
+		if err := store.SetUserAPIKeyHash(1, cfg.AdminAPIKey); err != nil {
+			return fmt.Errorf("applying ADMIN_API_KEY: %w", err)
+		}
+		log.Info("admin api key updated from environment")
+	}
+	if cfg.AuthRequired && cfg.AdminAPIKey == "" {
+		log.Warn("AUTH_REQUIRED is true but ADMIN_API_KEY is unset; only keys already in the users table will authenticate")
+	}
 
 	registry := jobs.NewRegistry()
 	jobs.RegisterDefaultHandlers(registry)
@@ -113,7 +133,12 @@ func run(log *slog.Logger) error {
 	}
 
 	handlers := api.NewHandlers(mgr, pool, m, log)
-	router := api.NewRouter(handlers, "web", log)
+	var auth *api.Authenticator
+	if cfg.AuthRequired {
+		auth = api.NewAuthenticator(store)
+		log.Info("api key authentication enabled for mutating endpoints")
+	}
+	router := api.NewRouter(handlers, "web", log, auth)
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: router,
