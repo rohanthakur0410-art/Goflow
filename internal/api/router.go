@@ -7,17 +7,25 @@ import (
 )
 
 // NewRouter builds the complete HTTP handler for GoFlow: the JSON REST API,
-// the Prometheus metrics endpoint, and the static dashboard files.
-func NewRouter(h *Handlers, webDir string, log *slog.Logger) http.Handler {
+// the Prometheus metrics endpoint, and the static dashboard files. When auth
+// is non-nil, the mutating endpoints (job submit/cancel/retry/delete)
+// require a valid API key; read endpoints, /metrics, /health and the
+// dashboard stay open so monitoring keeps working without secrets.
+func NewRouter(h *Handlers, webDir string, log *slog.Logger, auth *Authenticator) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("POST /api/jobs", h.CreateJob)
+	guard := func(next http.HandlerFunc) http.HandlerFunc { return next }
+	if auth != nil {
+		guard = auth.RequireKey
+	}
+
+	mux.HandleFunc("POST /api/jobs", guard(h.CreateJob))
 	mux.HandleFunc("GET /api/jobs", h.ListJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", h.GetJob)
 	mux.HandleFunc("GET /api/jobs/{id}/attempts", h.ListAttempts)
-	mux.HandleFunc("POST /api/jobs/{id}/cancel", h.CancelJob)
-	mux.HandleFunc("POST /api/jobs/{id}/retry", h.RetryJob)
-	mux.HandleFunc("DELETE /api/jobs/{id}", h.DeleteJob)
+	mux.HandleFunc("POST /api/jobs/{id}/cancel", guard(h.CancelJob))
+	mux.HandleFunc("POST /api/jobs/{id}/retry", guard(h.RetryJob))
+	mux.HandleFunc("DELETE /api/jobs/{id}", guard(h.DeleteJob))
 
 	mux.HandleFunc("GET /api/workers", h.ListWorkers)
 	mux.HandleFunc("GET /api/workers/{id}", h.GetWorker)
